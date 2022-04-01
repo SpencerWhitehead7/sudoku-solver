@@ -29,6 +29,10 @@ body * {
   }
 }
 
+.solved {
+  color: green;
+}
+
 input {
   margin: 0;
   padding: 0;
