@@ -7,7 +7,7 @@ window.onload = () => {
   };
 
   const BOARD = new Array(9).fill().map(() => new Uint8Array(9));
-  const solverWorker = createWorker("worker.js");
+  const solverWorkerPool = createWorkerPool("worker.js", 9);
 
   for (let rowI = 0; rowI < 9; rowI++) {
     for (let colI = 0; colI < 9; colI++) {
@@ -35,14 +35,41 @@ window.onload = () => {
 
     try {
       const start = performance.now();
-      const solved = await new Promise((resolve, reject) => {
-        solverWorker({
-          data: BOARD,
-          transferrables: BOARD.map((row) => row.buffer),
-          resolve,
-          reject,
-        });
-      });
+      let firstEmptyCellRowI;
+      let firstEmptyCellColI;
+      for (let rowI = 0; rowI < 9; rowI++) {
+        for (let colI = 0; colI < 9; colI++) {
+          if (!BOARD[rowI][colI]) {
+            firstEmptyCellRowI = rowI;
+            firstEmptyCellColI = colI;
+            break;
+          }
+        }
+        if (firstEmptyCellRowI && firstEmptyCellColI) break;
+      }
+
+      let solved;
+      if (!firstEmptyCellRowI && !firstEmptyCellColI) {
+        solved = await solverWorkerPool(
+          BOARD,
+          BOARD.map((row) => new Uint8Array(row)).map((row) => row.buffer)
+        );
+      } else {
+        solved = await Promise.any(
+          new Array(9)
+            .fill(1)
+            .map((one, i) => i + one)
+            .map((candidate) => {
+              const candidateBoard = BOARD.map((row) => new Uint8Array(row));
+              candidateBoard[firstEmptyCellRowI][firstEmptyCellColI] =
+                candidate;
+              return solverWorkerPool(
+                candidateBoard,
+                candidateBoard.map((row) => row.buffer)
+              );
+            })
+        );
+      }
       console.log(performance.now() - start);
 
       for (let rowI = 0; rowI < 9; rowI++) {
@@ -64,7 +91,31 @@ window.onload = () => {
   };
 };
 
-const createWorker = (script) => {
+const createWorkerPool = (script, count = navigator.hardwareConcurrency) => {
+  const workerStack = [];
+  const taskQueue = [];
+
+  const free = (worker) => {
+    if (taskQueue.length) {
+      worker(taskQueue.shift());
+    } else {
+      workerStack.push(worker);
+    }
+  };
+
+  for (let i = 0; i < count; i++) {
+    workerStack.push(createWorker(script, free));
+  }
+
+  return (data, transferables) =>
+    new Promise((resolve, reject) => {
+      const task = { data, transferables, resolve, reject };
+      const worker = workerStack.pop();
+      worker ? worker(task) : taskQueue.push(task);
+    });
+};
+
+const createWorker = (script, free) => {
   const worker = new Worker(script);
 
   let currTask = {
@@ -83,9 +134,11 @@ const createWorker = (script) => {
     e.data.isError
       ? currTask.reject(e.data.payload)
       : currTask.resolve(e.data.payload);
+    free(workerApi);
   };
   worker.onerror = (e) => {
     currTask.reject(e);
+    free(workerApi);
   };
 
   return workerApi;
@@ -293,7 +346,7 @@ const chunk = (arr, len) => {
 };
 
 const bench = async () => {
-  const benchWorker = createWorker("worker.js");
+  const benchPool = createWorkerPool("worker.js", 9);
 
   const times = [];
   CHUNKED_SAMPLE_BOARDS = FLAT_SAMPLE_BOARDS.map(({ i, o }) => ({
@@ -311,14 +364,42 @@ const bench = async () => {
     const { i, o } = DUPLICATED_SAMPLE_BOARDS[j];
     try {
       const start = performance.now();
-      const solved = await new Promise((resolve, reject) => {
-        benchWorker({
-          data: i,
-          transferrables: i.map((row) => row.buffer),
-          resolve,
-          reject,
-        });
-      });
+      let firstEmptyCellRowI;
+      let firstEmptyCellColI;
+      for (let rowI = 0; rowI < 9; rowI++) {
+        for (let colI = 0; colI < 9; colI++) {
+          if (!i[rowI][colI]) {
+            firstEmptyCellRowI = rowI;
+            firstEmptyCellColI = colI;
+            break;
+          }
+        }
+        if (firstEmptyCellRowI && firstEmptyCellColI) break;
+      }
+
+      let solved;
+      if (!firstEmptyCellRowI && !firstEmptyCellColI) {
+        solved = await benchPool(
+          i,
+          i.map((row) => row.buffer)
+        );
+      } else {
+        solved = await Promise.any(
+          new Array(9)
+            .fill(1)
+            .map((one, i) => i + one)
+            .map((candidate) => {
+              const candidateBoard = i.map((row) => new Uint8Array(row));
+              candidateBoard[firstEmptyCellRowI][firstEmptyCellColI] =
+                candidate;
+
+              return benchPool(
+                candidateBoard,
+                candidateBoard.map((row) => row.buffer)
+              );
+            })
+        );
+      }
       times.push(performance.now() - start);
       if (o.some((row, ri) => row.some((v, ci) => v !== solved[ri][ci]))) {
         console.error("incorrect answer", i, solved, o);
