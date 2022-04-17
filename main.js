@@ -88,27 +88,43 @@ const isValidSudoku = (board) => {
   return true;
 };
 
-const isCompleteSudoku = (board) =>
-  board.every((row) => row.every((cell) => cell !== 0));
-
 const solveSudoku = (board) => {
-  if (!isValidSudoku(board)) return null;
+  const isValidGuess = (board, candidate, rowI, colI) => {
+    for (let i = 0; i < 9; i++) {
+      if (board[rowI][i] === candidate) return false;
+      if (board[i][colI] === candidate) return false;
+      if (
+        board[3 * Math.floor(rowI / 3) + Math.floor(i / 3)][
+          3 * Math.floor(colI / 3) + (i % 3)
+        ] === candidate
+      )
+        return false;
+    }
 
-  for (let rowI = 0; rowI < 9; rowI++) {
-    for (let colI = 0; colI < 9; colI++) {
-      if (board[rowI][colI] === 0) {
-        for (let candidate = 1; candidate < 10; candidate++) {
-          board[rowI][colI] = candidate;
-          solveSudoku(board);
-          if (isCompleteSudoku(board) && isValidSudoku(board)) return board;
-        }
+    return true;
+  };
+
+  const solver = (board, n = 0) => {
+    if (n === 81) return true;
+
+    const colI = n % 9;
+    const rowI = (n - colI) / 9;
+
+    if (board[rowI][colI] !== 0) return solver(board, n + 1);
+
+    for (let candidate = 1; candidate < 10; candidate++) {
+      if (isValidGuess(board, candidate, rowI, colI)) {
+        board[rowI][colI] = candidate;
+        const isDone = solver(board, n + 1);
+        if (isDone) return true;
         board[rowI][colI] = 0;
-        return null;
       }
     }
-  }
 
-  return null;
+    return false;
+  };
+
+  return isValidSudoku(board) && solver(board) ? board : null;
 };
 
 const SAMPLE_BOARDS = [
