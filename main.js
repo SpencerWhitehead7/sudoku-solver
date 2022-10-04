@@ -7,6 +7,7 @@ window.onload = () => {
   };
 
   const BOARD = new Array(9).fill().map(() => new Uint8Array(9));
+  const solverWorker = createWorker("worker.js");
 
   for (let rowI = 0; rowI < 9; rowI++) {
     for (let colI = 0; colI < 9; colI++) {
@@ -28,15 +29,22 @@ window.onload = () => {
     BOARD[e.target.dataset.row_i][e.target.dataset.col_i] = e.target.value;
   };
 
-  DOM.FORM.onsubmit = (e) => {
+  DOM.FORM.onsubmit = async (e) => {
     e.preventDefault();
     DOM.SUBMIT_BTN.disabled = true;
 
-    const start = performance.now();
-    const solved = solveSudoku(BOARD);
-    console.log(performance.now() - start);
+    try {
+      const start = performance.now();
+      const solved = await new Promise((resolve, reject) => {
+        solverWorker({
+          data: BOARD,
+          transferrables: BOARD.map((row) => row.buffer),
+          resolve,
+          reject,
+        });
+      });
+      console.log(performance.now() - start);
 
-    if (solved) {
       for (let rowI = 0; rowI < 9; rowI++) {
         for (let colI = 0; colI < 9; colI++) {
           const cell = DOM.CELLS[rowI][colI];
@@ -48,83 +56,39 @@ window.onload = () => {
         }
       }
       DOM.SUBMIT_BTN.innerText = "Solved!";
-    } else {
+    } catch (e) {
+      console.error(e);
       DOM.SUBMIT_BTN.disabled = false;
       DOM.SUBMIT_BTN.innerText = "Unsolvable board";
     }
   };
 };
 
-const isValidSudoku = (board) => {
-  const isValidUnit = (items) => {
-    const hashMap = {};
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item !== 0 && hashMap[item]) {
-        return false;
-      } else {
-        hashMap[item] = true;
-      }
-    }
+const createWorker = (script) => {
+  const worker = new Worker(script);
 
-    return true;
+  let currTask = {
+    data: undefined,
+    transferables: undefined,
+    resolve: () => {},
+    reject: () => {},
   };
 
-  for (let i = 0; i < 9; i++) {
-    const row = Array(9);
-    const col = Array(9);
-    const box = Array(9);
-
-    for (let j = 0; j < 9; j++) {
-      row[j] = board[i][j];
-      col[j] = board[j][i];
-      box[j] = board[i - (i % 3) + Math.floor(j / 3)][3 * (i % 3) + (j % 3)];
-    }
-
-    if (!isValidUnit(row) || !isValidUnit(col) || !isValidUnit(box))
-      return false;
-  }
-
-  return true;
-};
-
-const solveSudoku = (board) => {
-  const isValidGuess = (board, candidate, rowI, colI) => {
-    for (let i = 0; i < 9; i++) {
-      if (board[rowI][i] === candidate) return false;
-      if (board[i][colI] === candidate) return false;
-      if (
-        board[3 * Math.floor(rowI / 3) + Math.floor(i / 3)][
-          3 * Math.floor(colI / 3) + (i % 3)
-        ] === candidate
-      )
-        return false;
-    }
-
-    return true;
+  const workerApi = (nextTask) => {
+    currTask = nextTask;
+    worker.postMessage(currTask.data, currTask.transferables);
   };
 
-  const solver = (board, n = 0) => {
-    if (n === 81) return true;
-
-    const colI = n % 9;
-    const rowI = (n - colI) / 9;
-
-    if (board[rowI][colI] !== 0) return solver(board, n + 1);
-
-    for (let candidate = 1; candidate < 10; candidate++) {
-      if (isValidGuess(board, candidate, rowI, colI)) {
-        board[rowI][colI] = candidate;
-        const isDone = solver(board, n + 1);
-        if (isDone) return true;
-        board[rowI][colI] = 0;
-      }
-    }
-
-    return false;
+  worker.onmessage = (e) => {
+    e.data.isError
+      ? currTask.reject(e.data.payload)
+      : currTask.resolve(e.data.payload);
+  };
+  worker.onerror = (e) => {
+    currTask.reject(e);
   };
 
-  return isValidSudoku(board) && solver(board) ? board : null;
+  return workerApi;
 };
 
 const SAMPLE_BOARDS = [
@@ -448,18 +412,31 @@ const SAMPLE_BOARDS = [
 ];
 
 const bench = async () => {
+  const benchWorker = createWorker("worker.js");
+
   const times = [];
 
   for (let j = 0; j < SAMPLE_BOARDS.length; j++) {
     const { i, o } = SAMPLE_BOARDS[j];
     const icpy = i.map((row) => new Uint8Array(row));
 
-    const start = performance.now();
-    solveSudoku(icpy);
-    times.push(performance.now() - start);
+    try {
+      const start = performance.now();
+      const solved = await new Promise((resolve, reject) => {
+        benchWorker({
+          data: icpy,
+          transferrables: icpy.map((row) => row.buffer),
+          resolve,
+          reject,
+        });
+      });
+      times.push(performance.now() - start);
 
-    if (o.some((row, ri) => row.some((v, ci) => v !== icpy[ri][ci]))) {
-      console.error("incorrect answer", i, icpy, o);
+      if (o.some((row, ri) => row.some((v, ci) => v !== solved[ri][ci]))) {
+        console.error("incorrect answer", i, icpy, o);
+      }
+    } catch (e) {
+      console.error("bench error", e);
     }
   }
 
