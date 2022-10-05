@@ -346,8 +346,6 @@ const chunk = (arr, len) => {
 };
 
 const bench = async () => {
-  const benchPool = createWorkerPool("worker.js", 9);
-
   const times = [];
   CHUNKED_SAMPLE_BOARDS = FLAT_SAMPLE_BOARDS.map(({ i, o }) => ({
     i: chunk(i, 9),
@@ -415,6 +413,8 @@ const bench = async () => {
 
   console.log({ total, avg });
 };
+
+const benchPool = createWorkerPool("worker.js", 9);
 
 setTimeout(() => {
   bench();
