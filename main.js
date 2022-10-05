@@ -466,8 +466,6 @@ const SAMPLE_BOARDS = [
 ];
 
 const bench = async () => {
-  const benchPool = createWorkerPool("worker.js", 9);
-
   const times = [];
 
   for (let j = 0; j < SAMPLE_BOARDS.length; j++) {
@@ -528,6 +526,8 @@ const bench = async () => {
   console.log(times);
   console.log({ total, avg });
 };
+
+const benchPool = createWorkerPool("worker.js", 9);
 
 setTimeout(() => {
   bench();
